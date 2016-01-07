@@ -117,7 +117,7 @@ class SalesforceBulk(object):
         return self.create_job(object_name, "delete", **kwargs)
 
     def create_job(self, object_name=None, operation=None, contentType='CSV',
-                   concurrency=None):
+                   concurrency=None, extra_headers=None):
         assert(object_name is not None)
         assert(operation is not None)
 
@@ -127,9 +127,12 @@ class SalesforceBulk(object):
                                   concurrency=concurrency)
 
         http = Http()
+        headers = self.headers()
+        if extra_headers is not None:
+            headers.update(extra_headers)
         resp, content = http.request(self.endpoint + "/services/async/" + self.sf_version + "/job",
                                      "POST",
-                                     headers=self.headers(),
+                                     headers=headers,
                                      body=doc)
 
         self.check_status(resp, content)
@@ -185,14 +188,14 @@ class SalesforceBulk(object):
         return buf.getvalue()
 
     # Add a BulkQuery to the job - returns the batch id
-    def query(self, job_id, soql):
+    def query(self, job_id, soql, addCSVHeader=False):
         if job_id is None:
             job_id = self.create_job(
                 re.search(re.compile("from (\w+)", re.I), soql).group(1),
                 "query")
         http = Http()
         uri = self.endpoint + "/services/async/"+self.sf_version+"/job/%s/batch" % job_id
-        headers = self.headers({"Content-Type": "text/csv"})
+        headers = self.headers({"Content-Type": "text/csv"}) if addCSVHeader else self.headers()
         resp, content = http.request(uri, method="POST", body=soql,
                                      headers=headers)
 
@@ -370,6 +373,47 @@ class SalesforceBulk(object):
             raise BulkBatchFailed(job_id, batch_id, status['stateMessage'])
         return batch_state == bulk_states.COMPLETED
 
+    # When PK chunking is used we get more than one batch, and hence more than one batch status. Generalizing
+    # batch_status() to take this into account.
+    # See https://developer.salesforce.com/docs/atlas.en-us.198.0.api_asynch.meta/api_asynch/async_api_headers_enable_pk_chunking.htm
+    def all_batch_statuses(self, job_id, first_batch_id, pk_chunking, reload=False):
+        if not pk_chunking:
+            return [self.batch_status(job_id, first_batch_id, reload=reload)]
+        else:
+            uri = urlparse.urljoin(self.endpoint, '/services/async/'+self.sf_version+'/job/{0}/batch'.format(job_id))
+            response = requests.get(uri, headers=self.headers())
+            if response.status_code != 200:
+                self.raise_error(response.content, response.status_code)
+
+            tree = ET.fromstring(response.content)
+            result = []
+            for batch_info in tree:
+                batch_result = {}
+                for child in batch_info:
+                    batch_result[re.sub("{.*?}", "", child.tag)] = child.text
+
+                # If this batch is the first batch, skip it, since SF marks it as 'NotProcessed'
+                if first_batch_id != batch_result["id"]:
+                    result.append(batch_result)
+            return result
+
+    def is_job_done(self, job_id, first_batch_id, pk_chunking):
+
+        # If pk_chunking is turned on and we get no results from all_batch_statuses(), that means
+        # the batches have not been created yet, i.e. we're not done.
+        all_batch_statuses = self.all_batch_statuses(job_id, first_batch_id, pk_chunking, reload=True);
+        if pk_chunking and not all_batch_statuses:
+            return False
+
+        for batch_info in all_batch_statuses:
+            batch_state = batch_info['state']
+            if batch_state in bulk_states.ERROR_STATES:
+                status = self.batch_status(job_id, batch_info['id'])
+                raise BulkBatchFailed(job_id, batch_info['id'], status['stateMessage'])
+            elif batch_state != bulk_states.COMPLETED:
+                return False
+        return True
+
     # Wait for the given batch to complete, waiting at most timeout seconds
     # (defaults to 10 minutes).
     def wait_for_batch(self, job_id, batch_id, timeout=60 * 10,
@@ -404,8 +448,30 @@ class SalesforceBulk(object):
         return [str(r.text) for r in
                 tree.iterfind("{{{0}}}result".format(self.jobNS))]
 
-    def get_batch_results(self, batch_id, result_id, job_id=None,
-                          parse_csv=False, logger=None):
+    def get_all_batches_result_ids(self, job_id, first_batch_id, pk_chunking):
+        batch_result_ids = {}
+        for batch_info in self.all_batch_statuses(job_id, first_batch_id, pk_chunking, reload=True):
+            batch_id = batch_info['id'];
+            batch_result_ids[batch_id] = self.get_batch_result_ids(batch_id, job_id)
+            if (batch_result_ids[batch_id] == False):
+                return False
+        return batch_result_ids
+
+    def get_batch_results(self, batch_id, result_id, job_id=None, logger=None):
+        job_id = job_id or self.lookup_job_id(batch_id)
+        logger = logger or (lambda message: None)
+
+        uri = urlparse.urljoin(
+            self.endpoint,
+            "services/async/"+self.sf_version+"/job/{0}/batch/{1}/result/{2}".format(
+                job_id, batch_id, result_id),
+        )
+        logger('Downloading bulk result file id=#{0}'.format(result_id))
+        resp = requests.get(uri, headers=self.headers(), stream=True)
+        for chunk in resp.iter_content(chunk_size=2048):
+            yield chunk
+
+    def get_batch_results_lines(self, batch_id, result_id, job_id=None, logger=None):
         job_id = job_id or self.lookup_job_id(batch_id)
         logger = logger or (lambda message: None)
 
@@ -417,14 +483,8 @@ class SalesforceBulk(object):
         logger('Downloading bulk result file id=#{0}'.format(result_id))
         resp = requests.get(uri, headers=self.headers(), stream=True)
 
-        if not parse_csv:
-            iterator = resp.iter_lines()
-        else:
-            iterator = csv.reader(resp.iter_lines(), delimiter=',',
-                                  quotechar='"')
-
         BATCH_SIZE = 5000
-        for i, line in enumerate(iterator):
+        for i, line in enumerate(resp.iter_lines()):
             if i % BATCH_SIZE == 0:
                 logger('Loading bulk result #{0}'.format(i))
             yield line
