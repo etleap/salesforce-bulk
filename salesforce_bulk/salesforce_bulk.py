@@ -426,7 +426,16 @@ class SalesforceBulk(object):
     def wait_for_job(self, job_id, first_batch_id, pk_chunking, timeout=60 * 10,
                        sleep_interval=10):
         waited = 0
+        batch_count = 1
         while not self.is_job_done(job_id, first_batch_id, pk_chunking) and waited < timeout:
+
+            # Get the current batch count, if it's greater than the old batch count, yield it
+            # No need to reload, as is_job_done did that
+            current_batch_count = len(self.all_batch_statuses(job_id, first_batch_id, pk_chunking, reload=False))
+            if current_batch_count > batch_count:
+                batch_count = current_batch_count
+                yield batch_count
+
             time.sleep(sleep_interval)
             waited += sleep_interval
 
