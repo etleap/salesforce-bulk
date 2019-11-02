@@ -107,6 +107,9 @@ class SalesforceBulk(object):
     def create_query_job(self, object_name, **kwargs):
         return self.create_job(object_name, "query", **kwargs)
 
+    def create_query_all_job(self, object_name, **kwargs):
+        return self.create_job(object_name, "queryAll", **kwargs)
+
     def create_insert_job(self, object_name, **kwargs):
         return self.create_job(object_name, "insert", **kwargs)
 
