@@ -1,4 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+# PyBuilder
+target/
 salesforce_bulk.egg-info*
 */salesforce_bulk.egg-info/*
 build/*
 dist/*
+
+# Local Dev
+.idea
+

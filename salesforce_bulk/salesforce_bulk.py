@@ -119,7 +119,7 @@ class SalesforceBulk(object):
     def create_delete_job(self, object_name, **kwargs):
         return self.create_job(object_name, "delete", **kwargs)
 
-    def create_job(self, object_name=None, operation=None, contentType='CSV',
+    def create_job(self, object_name=None, operation=None, contentType='XML',
                    concurrency=None, extra_headers=None):
         assert(object_name is not None)
         assert(operation is not None)
