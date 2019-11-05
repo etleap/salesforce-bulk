@@ -51,7 +51,7 @@ class BulkBatchFailed(BulkApiError):
 class SalesforceBulk(object):
 
     def __init__(self, sessionId=None, host=None, username=None, password=None,
-                 exception_class=BulkApiError, version='33.0'):
+                 exception_class=BulkApiError, version='39.0'):
         if not sessionId and not username:
             raise RuntimeError(
                 "Must supply either sessionId/instance_url or username/password")
@@ -107,6 +107,9 @@ class SalesforceBulk(object):
     def create_query_job(self, object_name, **kwargs):
         return self.create_job(object_name, "query", **kwargs)
 
+    def create_query_all_job(self, object_name, **kwargs):
+        return self.create_job(object_name, "queryAll", **kwargs)
+
     def create_insert_job(self, object_name, **kwargs):
         return self.create_job(object_name, "insert", **kwargs)
 
@@ -116,7 +119,7 @@ class SalesforceBulk(object):
     def create_delete_job(self, object_name, **kwargs):
         return self.create_job(object_name, "delete", **kwargs)
 
-    def create_job(self, object_name=None, operation=None, contentType='CSV',
+    def create_job(self, object_name=None, operation=None, contentType='XML',
                    concurrency=None, extra_headers=None):
         assert(object_name is not None)
         assert(operation is not None)
