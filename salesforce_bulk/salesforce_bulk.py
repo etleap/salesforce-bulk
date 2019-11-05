@@ -51,7 +51,7 @@ class BulkBatchFailed(BulkApiError):
 class SalesforceBulk(object):
 
     def __init__(self, sessionId=None, host=None, username=None, password=None,
-                 exception_class=BulkApiError, version='33.0'):
+                 exception_class=BulkApiError, version='39.0'):
         if not sessionId and not username:
             raise RuntimeError(
                 "Must supply either sessionId/instance_url or username/password")
